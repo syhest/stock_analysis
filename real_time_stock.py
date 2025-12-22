@@ -284,6 +284,18 @@ class StockDataFetcher:
         elif time_range == 'day':
             klt = 101  # 日线
             lmt = 100  # 约100个交易日的数据
+        elif time_range == '60min':
+            klt = 60  # 60分钟线
+            lmt = 100  # 默认获取100条60分钟数据
+        elif time_range == '30min':
+            klt = 30  # 30分钟线
+            lmt = 200  # 默认获取200条30分钟数据
+        elif time_range == '15min':
+            klt = 15  # 15分钟线
+            lmt = 300  # 默认获取300条15分钟数据
+        elif time_range == '5min':
+            klt = 5  # 5分钟线
+            lmt = 500  # 默认获取500条5分钟数据
         elif time_range == '1min':
             klt = 1  # 1分钟线
             lmt = 1000  # 默认获取1000条1分钟数据
@@ -299,17 +311,38 @@ class StockDataFetcher:
             'lmt': lmt
         }
     
-    def fetch_kline_data(self, secid, klt, lmt, referer):
+    def fetch_kline_data(self, secid, klt, lmt, referer, start_date=None, end_date=None):
         """
-        从东方财富网API获取K线数据
-        :param secid: 东方财富网的secid
-        :param klt: 时间周期参数
-        :param lmt: 数据条数
+        从东方财富网获取K线数据
+        :param secid: 股票代码，格式为market_code.code
+        :param klt: 时间周期
+        :param lmt: 获取数据的条数
         :param referer: 请求头中的referer
+        :param start_date: 开始日期，格式为YYYY-MM-DD或YYYYMMDD
+        :param end_date: 结束日期，格式为YYYY-MM-DD或YYYYMMDD
         :return: 解析后的JSON数据，如果失败返回None
         """
+        # 处理日期格式
+        def format_date(date_str):
+            if date_str:
+                # 移除可能的分隔符
+                date_str = date_str.replace('-', '')
+                # 如果是简单的日期格式（8位），转换为完整的时间格式
+                if len(date_str) == 8:
+                    return date_str + '000000'  # 加上 00:00:00
+                return date_str
+            return None
+        
         # 构建API请求URL
-        url = f"https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt={klt}&fqt=1&end=20500101&lmt={lmt}"
+        url = f"https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt={klt}&fqt=1&lmt={lmt}&ut=fa5fd1943c7b386f172d6893dbfba10b"
+        
+        # 添加日期范围参数
+        if start_date:
+            url += f"&beg={format_date(start_date)}"
+        if end_date:
+            url += f"&end={format_date(end_date)}"
+        else:
+            url += "&end=20500101000000"  # 默认结束日期为2050年，使用完整时间格式
         
         # 设置请求头
         headers = {
@@ -336,12 +369,17 @@ class StockDataFetcher:
             data = json.loads(data_str)
         except Exception as e:
             print(f"JSON解析失败: {e}")
+            print(f"原始响应数据: {data_str}")
             return None
         
         # 检查响应状态
         if data.get('rc') != 0:
             print(f"东方财富API返回错误: {data.get('msg', '未知错误')}")
+            print(f"完整响应数据: {data}")
             return None
+        
+        # 调试：打印完整响应数据
+        print(f"API响应数据: {data}")
         
         return data
     
@@ -385,39 +423,112 @@ class StockDataFetcher:
         
         return df
     
-    def get_stock_data_by_time_range(self, code, time_range):
+    def get_stock_data_by_time_range(self, code, time_range, start_date=None, end_date=None):
         """
-        获取不同时间范围的股票数据
+        获取不同时间范围的股票数据，支持分页查询以获取完整数据
         """
         try:
             if not code or not time_range:
                 return None
 
             print(f"正在获取{code}的{time_range}数据...")
+            if start_date:
+                print(f"开始日期：{start_date}")
+            if end_date:
+                print(f"结束日期：{end_date}")
 
             # 获取股票配置信息
             config = self.get_stock_config(code, time_range)
             if not config:
                 return None
             
-            # 从API获取K线数据
-            data = self.fetch_kline_data(config['secid'], config['klt'], config['lmt'], config['referer'])
-            if not data or 'data' not in data or data['data'] is None:
-                print(f"未获取到{code}的{time_range}数据")
-                return None
-            
-            # 提取K线数据
-            klines = data['data'].get('klines', [])
-            if not klines:
-                print(f"K线数据为空")
-                return None
-            
-            print(f"成功获取{len(klines)}条K线数据")
+            # 处理1分钟数据的分页查询
+            if time_range == '1min':
+                print("获取1分钟数据...")
+                all_klines = []
+                
+                # 东方财富网API不支持历史1分钟数据的精确日期查询
+                # 我们先获取所有可用的1分钟数据，然后在本地过滤指定日期范围
+                
+                # 对于1分钟数据，设置较大的lmt参数以获取尽可能多的数据
+                config['lmt'] = 10000  # 获取更多数据
+                
+                print(f"\n--- 获取所有可用的1分钟数据 ---")
+                print(f"  查询参数: lmt={config['lmt']}")
+                
+                # 从API获取所有1分钟K线数据（不指定日期范围，让API返回最近的所有数据）
+                data = self.fetch_kline_data(config['secid'], config['klt'], config['lmt'], config['referer'])
+                if not data or 'data' not in data or data['data'] is None:
+                    print("未获取到1分钟K线数据")
+                    return None
+                
+                # 提取K线数据
+                all_klines = data['data'].get('klines', [])
+                if not all_klines:
+                    print("1分钟K线数据为空")
+                    return None
+                
+                # 打印获取到的数据时间范围
+                first_kline_date = all_klines[0].split(',')[0] if len(all_klines[0].split(',')) > 0 else "未知"
+                last_kline_date = all_klines[-1].split(',')[0] if len(all_klines[-1].split(',')) > 0 else "未知"
+                print(f"成功获取{len(all_klines)}条1分钟K线数据")
+                print(f"  数据时间范围: {first_kline_date} 到 {last_kline_date}")
+                
+                # 暂停一下，避免请求过于频繁
+                time.sleep(0.5)
+
+            else:
+                # 非1分钟数据的处理
+                all_klines = []
+                
+                print(f"\n--- 获取{time_range}数据 ---")
+                
+                # 尝试按指定日期范围获取数据
+                data = self.fetch_kline_data(config['secid'], config['klt'], config['lmt'], config['referer'], start_date, end_date)
+                
+                # 如果按日期范围获取失败或数据为空，尝试获取所有数据后在本地过滤
+                if not data or 'data' not in data or data['data'] is None or not data['data'].get('klines', []):
+                    print(f"按日期范围获取{time_range}数据失败或为空，尝试获取所有数据后在本地过滤")
+                    
+                    # 增加lmt参数以获取更多历史数据
+                    config['lmt'] = 1000  # 获取更多历史数据
+                    print(f"  查询参数: lmt={config['lmt']}")
+                    
+                    # 不指定日期范围，让API返回最近的所有数据
+                    data = self.fetch_kline_data(config['secid'], config['klt'], config['lmt'], config['referer'])
+                    
+                    if not data or 'data' not in data or data['data'] is None:
+                        print(f"未获取到{code}的{time_range}数据")
+                        return None
+                
+                # 提取K线数据
+                all_klines = data['data'].get('klines', [])
+                if not all_klines:
+                    print(f"K线数据为空")
+                    return None
+                
+                print(f"成功获取{len(all_klines)}条{time_range}K线数据")
+                
+                # 打印获取到的数据时间范围
+                first_kline_date = all_klines[0].split(',')[0] if len(all_klines[0].split(',')) > 0 else "未知"
+                last_kline_date = all_klines[-1].split(',')[0] if len(all_klines[-1].split(',')) > 0 else "未知"
+                print(f"  数据时间范围: {first_kline_date} 到 {last_kline_date}")
             
             # 解析K线数据
-            df = self.parse_kline_data(klines, code)
+            df = self.parse_kline_data(all_klines, code)
             
-            print(f"成功解析{len(df)}条{time_range}数据")
+            # 去重，确保日期不重复
+            df = df[~df.index.duplicated(keep='first')]
+            
+            # 如果有开始和结束日期，过滤数据
+            if start_date:
+                start_dt = pd.to_datetime(start_date)
+                df = df[df.index >= start_dt]
+            if end_date:
+                end_dt = pd.to_datetime(end_date) + pd.Timedelta(days=1)  # 包含结束日期当天的所有数据
+                df = df[df.index < end_dt]
+            
+            print(f"成功解析并去重后，得到{len(df)}条{time_range}数据")
             return df
         except Exception as e:
             print(f"获取{code}的{time_range}数据失败: {e}")
@@ -478,24 +589,13 @@ class StockDatabaseManager:
         )
         ''')
         
-        # 创建历史数据表
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS stock_history_data (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            symbol TEXT NOT NULL,
-            date TEXT NOT NULL,
-            open REAL NOT NULL,
-            close REAL NOT NULL,
-            high REAL NOT NULL,
-            low REAL NOT NULL,
-            volume INTEGER NOT NULL,
-            timestamp INTEGER NOT NULL,
-            time_range TEXT NOT NULL
-        )
-        ''')
+        # 不再创建单一的历史数据表，而是根据需要动态创建表
         
         conn.commit()
         conn.close()
+        
+        # 更新现有表结构，添加唯一约束以确保数据去重
+        self.update_existing_tables()
     
     def save_today_data_to_db(self, symbol, data):
         """保存当天股票数据到数据库"""
@@ -538,6 +638,92 @@ class StockDatabaseManager:
             print(f"保存当天数据失败: {e}")
             return False
     
+    def get_table_name(self, symbol, time_range, date=None):
+        """
+        根据时间范围和日期获取表名
+        :param symbol: 股票代码
+        :param time_range: 时间范围
+        :param date: 日期（分钟级别数据需要）
+        :return: 表名
+        """
+        # 将股票代码中的点号替换为下划线，因为SQLite表名不允许包含点号
+        symbol_safe = symbol.replace('.', '_')
+        
+        if time_range in ['day', 'week', 'month', 'year']:
+            # 日、周、月、年数据：股票代码_时间范围
+            return f"{symbol_safe}_{time_range}"
+        else:
+            # 分钟级别数据：股票代码_月份_时间范围简写
+            # 将 60min 转换为 60m，5min 转换为 5m 等
+            time_range_short = time_range.replace('min', 'm')
+            if date is None:
+                # 如果没有提供日期，使用当前月份
+                date_str = datetime.datetime.now().strftime('%Y%m')
+            else:
+                # 使用提供的日期的月份
+                date_str = date.strftime('%Y%m')
+            return f"{symbol_safe}_{date_str}_{time_range_short}"
+    
+    def create_table_if_not_exists(self, cursor, table_name):
+        """
+        如果表不存在则创建表
+        :param cursor: 数据库游标
+        :param table_name: 表名
+        """
+        # 使用反引号引用表名，确保特殊字符被正确处理
+        cursor.execute(f'''
+        CREATE TABLE IF NOT EXISTS `{table_name}` (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            open REAL NOT NULL,
+            close REAL NOT NULL,
+            high REAL NOT NULL,
+            low REAL NOT NULL,
+            volume INTEGER NOT NULL,
+            timestamp INTEGER NOT NULL,
+            UNIQUE(date)  -- 添加唯一约束，确保同一时间点的数据不会重复
+        )
+        ''')
+    
+    def update_existing_tables(self):
+        """
+        更新现有表结构，添加唯一约束以确保数据去重
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 获取所有表名
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+            tables = cursor.fetchall()
+            
+            # 过滤掉系统表和不需要添加约束的表
+            for table in tables:
+                table_name = table[0]
+                if table_name.startswith('sqlite_') or table_name in ['system_tables', 'system_info', 'today_stock_data']:
+                    continue
+                
+                try:
+                    # 检查表是否已经有唯一约束
+                    cursor.execute(f"PRAGMA index_list(`{table_name}`);")
+                    indexes = cursor.fetchall()
+                    has_unique_constraint = any(index[2] == 1 for index in indexes)  # 1表示唯一索引
+                    
+                    if not has_unique_constraint:
+                        # 添加唯一约束
+                        cursor.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS `idx_{table_name}_date` ON `{table_name}` (date);")
+                        print(f"为表 `{table_name}` 添加了唯一约束")
+                except Exception as e:
+                    print(f"处理表 `{table_name}` 时出错: {e}")
+            
+            conn.commit()
+            conn.close()
+            print("现有表结构更新完成")
+            return True
+        except Exception as e:
+            print(f"更新现有表结构失败: {e}")
+            return False
+    
     def save_data_to_db(self, symbol, data, time_range='day'):
         """保存股票数据到数据库"""
         if data is None:
@@ -548,29 +734,61 @@ class StockDatabaseManager:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # 批量插入数据
-            rows = []
-            for index, row in data.iterrows():
-                rows.append((
-                    symbol,
-                    index.strftime('%Y-%m-%d'),
-                    row['open'],
-                    row['close'],
-                    row['high'],
-                    row['low'],
-                    int(row['volume']),
-                    int(index.timestamp()),
-                    time_range
-                ))
-            
-            cursor.executemany('''
-            INSERT INTO stock_history_data (symbol, date, open, close, high, low, volume, timestamp, time_range)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', rows)
+            # 根据时间范围分组数据
+            if time_range in ['day', 'week', 'month', 'year']:
+                # 日、周、月、年数据：所有数据保存在一个表中
+                table_name = self.get_table_name(symbol, time_range)
+                self.create_table_if_not_exists(cursor, table_name)
+                
+                # 批量插入数据
+                rows = []
+                for index, row in data.iterrows():
+                    rows.append((
+                        index.strftime('%Y-%m-%d'),
+                        row['open'],
+                        row['close'],
+                        row['high'],
+                        row['low'],
+                        int(row['volume']),
+                        int(index.timestamp())
+                    ))
+                
+                cursor.executemany(f'''
+                INSERT OR REPLACE INTO `{table_name}` (date, open, close, high, low, volume, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', rows)
+            else:
+                # 分钟级别数据：按月份分组保存
+                # 按月份分组数据
+                data['month'] = data.index.strftime('%Y%m')
+                for month, month_data in data.groupby('month'):
+                    table_name = self.get_table_name(symbol, time_range, pd.Timestamp(f"{month}01"))
+                    self.create_table_if_not_exists(cursor, table_name)
+                    
+                    # 批量插入数据
+                    rows = []
+                    for index, row in month_data.iterrows():
+                        rows.append((
+                            index.strftime('%Y-%m-%d %H:%M:%S'),
+                            row['open'],
+                            row['close'],
+                            row['high'],
+                            row['low'],
+                            int(row['volume']),
+                            int(index.timestamp())
+                        ))
+                    
+                    cursor.executemany(f'''
+                    INSERT OR REPLACE INTO `{table_name}` (date, open, close, high, low, volume, timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ''', rows)
+                
+                # 删除临时添加的month列
+                del data['month']
             
             conn.commit()
             conn.close()
-            print(f"成功保存{len(rows)}条{time_range}数据")
+            print(f"成功保存{len(data)}条{time_range}数据")
             return True
         except Exception as e:
             print(f"保存{time_range}数据失败: {e}")
@@ -611,24 +829,90 @@ class StockDatabaseManager:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            query = '''
-            SELECT date, open, close, high, low, volume, timestamp
-            FROM stock_history_data
-            WHERE symbol = ? AND time_range = ?
-            '''
-            params = [symbol, time_range]
+            if time_range in ['day', 'week', 'month', 'year']:
+                # 日、周、月、年数据：从单一表中查询
+                table_name = self.get_table_name(symbol, time_range)
+                
+                query = f'''
+                SELECT date, open, close, high, low, volume, timestamp
+                FROM `{table_name}`
+                WHERE 1=1
+                '''
+                params = []
+                
+                if start_date:
+                    query += ' AND date >= ?'
+                    params.append(start_date)
+                if end_date:
+                    query += ' AND date <= ?'
+                    params.append(end_date)
+                
+                query += ' ORDER BY timestamp ASC'
+                
+                try:
+                    cursor.execute(query, params)
+                    data = cursor.fetchall()
+                except sqlite3.OperationalError:
+                    # 表不存在
+                    data = []
+            else:
+                # 分钟级别数据：需要查询多个月份的表
+                data = []
+                
+                # 确定需要查询的月份范围
+                if start_date:
+                    start_month = pd.Timestamp(start_date).strftime('%Y%m')
+                else:
+                    # 默认查询当前月份
+                    start_month = datetime.datetime.now().strftime('%Y%m')
+                
+                if end_date:
+                    end_month = pd.Timestamp(end_date).strftime('%Y%m')
+                else:
+                    # 默认查询当前月份
+                    end_month = datetime.datetime.now().strftime('%Y%m')
+                
+                # 生成需要查询的所有月份
+                months = []
+                current_month = start_month
+                while current_month <= end_month:
+                    months.append(current_month)
+                    # 计算下一个月份
+                    year = int(current_month[:4])
+                    month = int(current_month[4:])
+                    if month == 12:
+                        year += 1
+                        month = 1
+                    else:
+                        month += 1
+                    current_month = f"{year}{month:02d}"
+                
+                # 查询每个月份的表
+                for month in months:
+                    table_name = f"{symbol.replace('.', '_')}_{month}_{time_range.replace('min', 'm')}"
+                    query = f'''
+                    SELECT date, open, close, high, low, volume, timestamp
+                    FROM `{table_name}`
+                    WHERE 1=1
+                    '''
+                    params = []
+                    
+                    if start_date:
+                        query += ' AND date >= ?'
+                        params.append(start_date)
+                    if end_date:
+                        query += ' AND date <= ?'
+                        params.append(end_date)
+                    
+                    query += ' ORDER BY timestamp ASC'
+                    
+                    try:
+                        cursor.execute(query, params)
+                        data.extend(cursor.fetchall())
+                    except sqlite3.OperationalError:
+                        # 表不存在，跳过
+                        continue
             
-            if start_date:
-                query += ' AND date >= ?'
-                params.append(start_date)
-            if end_date:
-                query += ' AND date <= ?'
-                params.append(end_date)
-            
-            query += ' ORDER BY timestamp ASC'
-            
-            cursor.execute(query, params)
-            data = cursor.fetchall()
             conn.close()
             
             if data:
@@ -668,11 +952,11 @@ class RealTimeStockMonitor:
     
     def update_today_data(self):
         """
-        更新当天的1分钟数据
+        更新当天的日线数据
         """
         self.today_data = self.data_fetcher.get_stock_data_by_time_range(self.symbol, 'day')
         if self.today_data is not None:
-            print(f"获取了{len(self.today_data)}条当天1分钟数据")
+            print(f"获取了{len(self.today_data)}条当天日线数据")
         else:
             print("未能获取当天数据")
     
@@ -693,7 +977,7 @@ class RealTimeStockMonitor:
         """
         将指定时间范围的股票数据保存到SQLite数据库
         :param data: DataFrame数据
-        :param time_range: 时间范围，可选值：day/week/month
+        :param time_range: 时间范围，可选值：day/week/month/year/60min/30min/15min/5min/1min
         :return: bool
         """
         return self.db_manager.save_data_to_db(self.symbol, data, time_range)
@@ -710,7 +994,7 @@ class RealTimeStockMonitor:
         从SQLite数据库获取指定时间范围的股票数据
         - 1分钟数据从按股票代码和月份分表中获取
         - 其他时间范围从按股票代码分表中获取
-        :param time_range: 时间范围，可选值：day/week/month/year/1min
+        :param time_range: 时间范围，可选值：day/week/month/year/60min/30min/15min/5min/1min
         :param start_date: 开始日期，格式为YYYY-MM-DD或YYYY-MM-DD HH:MM:SS
         :param end_date: 结束日期，格式为YYYY-MM-DD或YYYY-MM-DD HH:MM:SS
         :return: DataFrame
@@ -934,7 +1218,9 @@ def main():
     parser = argparse.ArgumentParser(description='实时股票监控工具')
     parser.add_argument('--symbol', type=str, default='600000', help='股票代码')
     parser.add_argument('--interval', type=int, default=5, help='数据更新间隔（秒）')
-    parser.add_argument('--time-range', type=str, default='day', choices=['day', 'week', 'month', 'year'], help='数据时间范围')
+    parser.add_argument('--time-range', type=str, default='day', choices=['day', 'week', 'month', 'year', '60min', '30min', '15min', '5min', '1min'], help='数据时间范围')
+    parser.add_argument('--start-date', type=str, default=None, help='开始日期，格式为YYYY-MM-DD或YYYYMMDD')
+    parser.add_argument('--end-date', type=str, default=None, help='结束日期，格式为YYYY-MM-DD或YYYYMMDD')
     parser.add_argument('--save-to-db', action='store_true', help='保存数据到数据库')
     parser.add_argument('--load-from-db', action='store_true', help='从数据库加载数据')
     parser.add_argument('--with-gui', action='store_true', help='启用图形输出')
@@ -946,6 +1232,8 @@ def main():
     symbol = args.symbol
     interval = args.interval
     time_range = args.time_range
+    start_date = args.start_date
+    end_date = args.end_date
     with_gui = args.with_gui
     
     print("实时股票数据监控工具")
@@ -953,6 +1241,10 @@ def main():
     print(f"使用股票代码：{symbol}")
     print(f"数据更新间隔：{interval} 秒")
     print(f"时间范围：{time_range}")
+    if start_date:
+        print(f"开始日期：{start_date}")
+    if end_date:
+        print(f"结束日期：{end_date}")
     print(f"图形输出：{'启用' if with_gui else '禁用'}")
     
     # 创建监控实例
@@ -961,7 +1253,7 @@ def main():
     if args.save_to_db:
         # 获取指定时间范围的股票数据并保存到数据库
         print(f"正在获取{time_range}的股票数据...")
-        data = monitor.data_fetcher.get_stock_data_by_time_range(symbol, time_range)
+        data = monitor.data_fetcher.get_stock_data_by_time_range(symbol, time_range, start_date, end_date)
         if data is not None:
             print(f"成功获取{len(data)}条{time_range}数据")
             monitor.save_data_to_db(data, time_range)
@@ -970,7 +1262,7 @@ def main():
     elif args.load_from_db:
         # 从数据库加载指定时间范围的数据并绘制K线图
         print(f"正在从数据库加载{time_range}的股票数据...")
-        data = monitor.get_data_from_db(time_range)
+        data = monitor.get_data_from_db(time_range, start_date, end_date)
         if data is not None:
             print(f"成功从数据库加载{len(data)}条{time_range}数据")
             # 创建一个简单的实时数据结构用于绘制图表

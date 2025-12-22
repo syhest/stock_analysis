@@ -20,11 +20,11 @@
  -- 实时指标获取（macd、kdj、cci、expma）
  -- 数据包括：日、周、月、年 60 分钟、30 分钟、15 分钟、5 分钟、1 分钟
  -- 多市场支持（A股（上证、深证）、港股）
- -- 支持配置获取的时间范围（1天-1年）
+ -- 支持配置获取股票的日期范围
 
  - 数据持久化存储
    -- 存储数据库为SQLite
-   -- 支持多个股票交易级别的数据存储，包括：日、周、月、年、60分钟、30分钟、15分钟、5分钟、1分钟
+   -- 支持在SQLite存储多个股票交易级别的数据，包括：日、周、月、年、60分钟、30分钟、15分钟、5分钟、1分钟
    -- 存储格式：
          当股票数据为：日 ，周 ，月 ，年  sqlite表名为：股票代码_日/周/月/年
          当股票数据为：60 分钟，30 分钟，15 分钟，5 分钟，1 分钟 sqlite表名为：股票代码_月份_60m/30m/15m/5m/1m
@@ -85,7 +85,8 @@
 - **多市场支持**：支持A股（上证、深证）和港股
 - **数据可视化**：绘制K线图并支持实时更新
 - **数据持久化**：自动将股票数据保存到SQLite数据库
-- **多时间范围**：支持日、周、月、年等不同时间周期的K线图
+- **多时间范围**：支持日、周、月、年等不同时间周期的K线图，以及分钟级别数据（60分钟、30分钟、15分钟、5分钟、1分钟）
+- **日期范围筛选**：支持指定开始日期和结束日期获取特定时间段的数据
 - **双数据源**：新浪财经和东方财富网双备份，确保数据可靠性
 
 ## 主要文件
@@ -118,13 +119,54 @@ python real_time_stock.py --symbol 000001 --interval 5 --time-range day --with-g
 python real_time_stock.py --symbol 09868 --interval 5 --time-range day --with-gui
 ```
 
+#### 指定时间范围
+
+```bash
+# 获取日线数据
+python real_time_stock.py --symbol 600000 --time-range day
+
+# 获取周线数据
+python real_time_stock.py --symbol 600000 --time-range week
+
+# 获取月线数据
+python real_time_stock.py --symbol 600000 --time-range month
+
+# 获取年线数据
+python real_time_stock.py --symbol 600000 --time-range year
+
+# 获取分钟级别数据
+python real_time_stock.py --symbol 600000 --time-range 60min  # 60分钟数据
+python real_time_stock.py --symbol 600000 --time-range 30min  # 30分钟数据
+python real_time_stock.py --symbol 600000 --time-range 15min  # 15分钟数据
+python real_time_stock.py --symbol 600000 --time-range 5min   # 5分钟数据
+python real_time_stock.py --symbol 600000 --time-range 1min   # 1分钟数据
+```
+
+### 指定日期范围
+
+```bash
+# 获取指定日期范围的日线数据
+python real_time_stock.py --symbol 600000 --time-range day --start-date 2023-01-01 --end-date 2023-01-31
+
+# 获取指定日期范围的日线数据（另一种日期格式）
+python real_time_stock.py --symbol 600000 --time-range day --start-date 20230101 --end-date 20230131
+
+# 获取指定日期范围的日线数据并保存到数据库
+python real_time_stock.py --symbol 600000 --time-range day --start-date 2023-01-01 --end-date 2023-01-31 --save-to-db
+
+# 从数据库加载指定日期范围的日线数据
+python real_time_stock.py --symbol 600000 --time-range day --start-date 2023-01-01 --end-date 2023-01-31 --load-from-db
+```
+
 ### 命令行参数
 
 ```
 -h, --help            显示帮助信息
 --symbol SYMBOL       股票代码（必填）
 --interval INTERVAL   数据更新间隔（秒），默认5秒
---time-range {day,week,month,year} 时间范围，默认day
+--time-range {day,week,month,year,60min,30min,15min,5min,1min} 时间范围，默认day
+--start-date START_DATE 开始日期，格式为YYYY-MM-DD或YYYYMMDD，可选
+--end-date END_DATE   结束日期，格式为YYYY-MM-DD或YYYYMMDD，可选
 --save-to-db          仅将数据保存到数据库，不进行实时监控
 --load-from-db        从数据库加载数据并显示
 --with-gui            启用GUI显示（K线图）
